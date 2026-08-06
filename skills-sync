@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# ══════════════════════════════════════════════════════════════════
+# skills-sync — allinea ~/.claude/skills alla libreria remota.
+# Invocato da install.sh alla creazione del codespace,
+# e a mano in qualsiasi momento con: skills-sync
+# Idempotente. Gestisce skill aggiunte, rinominate e cancellate.
+# ══════════════════════════════════════════════════════════════════
+set -euo pipefail
+
+readonly CONF="${HOME}/.config/skills-sync.env"
+[[ -f "$CONF" ]] || { echo "[skills] ✗ config assente: $CONF" >&2; exit 1; }
+# shellcheck source=/dev/null
+source "$CONF"          # definisce LIB e SKILLS_DEST
+
+log() { printf '[skills] → %s\n' "$1"; }
+
+# ─── 1. Aggiorna la libreria ──────────────────────────────────────
+[[ -d "${LIB}/.git" ]] || { echo "[skills] ✗ libreria assente in ${LIB}" >&2; exit 1; }
+git -C "$LIB" pull --quiet --ff-only \
+  || { echo "[skills] ✗ pull fallito — modifiche locali non pushate?" >&2; exit 1; }
+
+mkdir -p "$SKILLS_DEST"
+
+# ─── 2. Prune dei symlink orfani ──────────────────────────────────
+# Copre skill cancellate o rinominate a monte, che resterebbero
+# come link rotti sporcando l'elenco /skills.
+while IFS= read -r dead; do
+  log "link morto rimosso: $(basename "$dead")"
+  rm -f "$dead"
+done < <(find "$SKILLS_DEST" -maxdepth 1 -type l ! -exec test -e {} \; -print)
+
+# ─── 3. Crea o aggiorna i link ────────────────────────────────────
+count=0
+for skill in "${LIB}"/skills/*/; do
+  [[ -f "${skill}SKILL.md" ]] || continue        # scarta cartelle non-skill
+  name="$(basename "$skill")"
+  target="${SKILLS_DEST}/${name}"
+  [[ -L "$target" ]] || log "NUOVA skill: ${name}"
+  ln -sfn "${skill%/}" "$target"                 # -n: niente link annidati
+  (( ++count ))
+done
+
+(( count > 0 )) || { echo "[skills] ✗ nessuna skill in ${LIB}/skills/" >&2; exit 1; }
+log "${count} skill attive"
