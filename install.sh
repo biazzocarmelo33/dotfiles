@@ -45,10 +45,21 @@ fi
 # ─── 4. Credenziali: token fuori da .git/config ───────────────────
 # Helper locale al repo: non interferisce con i repo di progetto,
 # che continuano a usare il token nativo del codespace.
+#
+# L'helper di sistema dei Codespace (/etc/gitconfig) risponde per
+# QUALSIASI repo github.com con il token ambientale, che copre solo
+# il repo del codespace corrente. Git prova gli helper nell'ordine
+# system → global → local e si ferma al primo che risponde con
+# username+password, quindi quello di sistema intercetterebbe la
+# richiesta prima che il nostro helper locale venga mai interpellato.
+# Il valore vuoto azzera la catena ereditata per questo repo, cosicché
+# resti attivo solo l'helper "store" impostato subito dopo.
 git -C "$LIB" remote set-url origin "https://github.com/${OWNER}/${REPO}.git"
 printf 'https://x-access-token:%s@github.com\n' "$WORKSPACE_PAT" > "$CREDFILE"
 chmod 600 "$CREDFILE"
-git -C "$LIB" config credential.helper "store --file=${CREDFILE}"
+git -C "$LIB" config --unset-all credential.helper 2>/dev/null || true
+git -C "$LIB" config --add credential.helper ""
+git -C "$LIB" config --add credential.helper "store --file=${CREDFILE}"
 
 # ─── 5. Installa skills-sync su PATH ──────────────────────────────
 mkdir -p "$BIN" "$CONF_DIR"
