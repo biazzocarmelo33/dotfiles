@@ -1,44 +1,63 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════════
-# skills-sync — allinea ~/.claude/skills alla libreria remota.
+# skills-sync — aggiorna la libreria carmelo-workspace e toglie da
+# ~/.claude/skills i vecchi symlink verso la libreria.
+#
+# Dal 19/11/2026 le skill arrivano SOLO dall'account claude.ai:
+# Claude Code (v2.1.273 o successiva, accesso con account claude.ai,
+# non con API key) le scarica in ~/.claude/skills/synced/ a ogni avvio
+# di sessione. Linkarle anche da qui caricava due copie di ogni skill.
+#
 # Invocato da install.sh alla creazione del codespace,
 # e a mano in qualsiasi momento con: skills-sync
-# Idempotente. Gestisce skill aggiunte, rinominate e cancellate.
+# Idempotente. Non tocca la cartella synced/ né le skill personali
+# che non puntano alla libreria.
+# Dipendenze: bash, git, coreutils (readlink, sort -V), grep
 # ══════════════════════════════════════════════════════════════════
 set -euo pipefail
 
 readonly CONF="${HOME}/.config/skills-sync.env"
-[[ -f "$CONF" ]] || { echo "[skills] ✗ config assente: $CONF" >&2; exit 1; }
-# shellcheck source=/dev/null
-source "$CONF"          # definisce LIB e SKILLS_DEST
+readonly MIN_CLAUDE="2.1.273"   # prima versione con la sync delle skill di claude.ai
 
 log() { printf '[skills] → %s\n' "$1"; }
+die() { printf '[skills] ✗ %s\n' "$1" >&2; exit 1; }
+
+[[ -f "$CONF" ]] || die "config assente: $CONF"
+# shellcheck source=/dev/null
+source "$CONF"          # definisce LIB e SKILLS_DEST
+[[ -n "${LIB:-}" && -n "${SKILLS_DEST:-}" ]] || die "LIB o SKILLS_DEST non definiti in $CONF"
 
 # ─── 1. Aggiorna la libreria ──────────────────────────────────────
-[[ -d "${LIB}/.git" ]] || { echo "[skills] ✗ libreria assente in ${LIB}" >&2; exit 1; }
+# Resta l'archivio versionato (skill, memoria, zip per claude.ai).
+[[ -d "${LIB}/.git" ]] || die "libreria assente in ${LIB}"
 git -C "$LIB" pull --quiet --ff-only \
-  || { echo "[skills] ✗ pull fallito — modifiche locali non pushate?" >&2; exit 1; }
+  || die "pull fallito — modifiche locali non pushate?"
+log "libreria aggiornata"
 
-mkdir -p "$SKILLS_DEST"
+# ─── 2. Rimuove i symlink verso la libreria e quelli morti ────────
+# Migrazione dei codespace creati prima del 19/11/2026. Si toccano
+# solo link al primo livello: cartelle vere e synced/ restano.
+removed=0
+if [[ -d "$SKILLS_DEST" ]]; then
+  while IFS= read -r -d '' link; do
+    dest="$(readlink -- "$link")"
+    if [[ "$dest" == "${LIB}/skills/"* || ! -e "$link" ]]; then
+      rm -f -- "$link"
+      log "link rimosso: $(basename -- "$link")"
+      removed=$((removed + 1))
+    fi
+  done < <(find "$SKILLS_DEST" -mindepth 1 -maxdepth 1 -type l -print0)
+fi
+log "${removed} link rimossi"
 
-# ─── 2. Prune dei symlink orfani ──────────────────────────────────
-# Copre skill cancellate o rinominate a monte, che resterebbero
-# come link rotti sporcando l'elenco /skills.
-while IFS= read -r dead; do
-  log "link morto rimosso: $(basename "$dead")"
-  rm -f "$dead"
-done < <(find "$SKILLS_DEST" -maxdepth 1 -type l ! -exec test -e {} \; -print)
+# ─── 3. Verifica che la sync da claude.ai possa funzionare ────────
+# Senza Claude Code abbastanza recente, dopo il passo 2 il codespace
+# resterebbe senza skill: meglio dirlo subito che scoprirlo in sessione.
+command -v claude >/dev/null 2>&1 || die "Claude Code non installato: nessuna skill disponibile"
+ver="$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+[[ -n "$ver" ]] || die "versione di Claude Code non leggibile: controlla a mano con /skills"
+lowest="$(printf '%s\n%s\n' "$MIN_CLAUDE" "$ver" | sort -V | head -n1)"
+[[ "$lowest" == "$MIN_CLAUDE" ]] \
+  || die "Claude Code ${ver} non sincronizza le skill (serve ${MIN_CLAUDE}+): npm install -g @anthropic-ai/claude-code@latest"
 
-# ─── 3. Crea o aggiorna i link ────────────────────────────────────
-count=0
-for skill in "${LIB}"/skills/*/; do
-  [[ -f "${skill}SKILL.md" ]] || continue        # scarta cartelle non-skill
-  name="$(basename "$skill")"
-  target="${SKILLS_DEST}/${name}"
-  [[ -L "$target" ]] || log "NUOVA skill: ${name}"
-  ln -sfn "${skill%/}" "$target"                 # -n: niente link annidati
-  (( ++count ))
-done
-
-(( count > 0 )) || { echo "[skills] ✗ nessuna skill in ${LIB}/skills/" >&2; exit 1; }
-log "${count} skill attive"
+log "Claude Code ${ver}: le skill arrivano da claude.ai (controllo: /skills, sezione claude.ai sync)"
