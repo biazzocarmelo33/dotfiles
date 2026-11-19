@@ -75,6 +75,9 @@ grep -q '.local/bin' "${HOME}/.bashrc" 2>/dev/null \
   || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "${HOME}/.bashrc"
 export PATH="${BIN}:${PATH}"
 
-# ─── 6. Prima sincronizzazione ────────────────────────────────────
+# ─── 6. Libreria aggiornata, nessun symlink alle skill ────────────
+# Le skill arrivano dall'account claude.ai (sync di Claude Code):
+# skills-sync aggiorna la libreria, toglie i vecchi link e controlla
+# che la versione di Claude Code supporti la sync.
 skills-sync || warn "skills-sync fallito — rilancialo a mano"
 log "ambiente pronto"
